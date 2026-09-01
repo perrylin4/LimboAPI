@@ -873,6 +873,10 @@ public class LimboImpl implements Limbo {
   }
 
   private CompoundBinaryTag createDimensionData(Dimension dimension, ProtocolVersion version) {
+    // 1.18+ clients support a data-driven world height. Older clients use a fixed 0..255 world.
+    int minY = version.compareTo(ProtocolVersion.MINECRAFT_1_18) >= 0 ? Settings.IMP.MAIN.MIN_Y : 0;
+    int height = version.compareTo(ProtocolVersion.MINECRAFT_1_18) >= 0 ? Settings.IMP.MAIN.HEIGHT : 256;
+
     CompoundBinaryTag.Builder details = CompoundBinaryTag.builder()
         .putBoolean("natural", false)
         .putFloat("ambient_light", 0.0F)
@@ -884,12 +888,12 @@ public class LimboImpl implements Limbo {
         .putBoolean("bed_works", false)
         .putBoolean("respawn_anchor_works", false)
         .putBoolean("has_raids", false)
-        .putInt("logical_height", 256)
+        .putInt("logical_height", height)
         .putString("infiniburn", version.compareTo(ProtocolVersion.MINECRAFT_1_18_2) >= 0 ? "#minecraft:infiniburn_nether" : "minecraft:infiniburn_nether")
         .putDouble("coordinate_scale", 1.0)
         .putString("effects", dimension.getKey())
-        .putInt("min_y", 0)
-        .putInt("height", 256)
+        .putInt("min_y", minY)
+        .putInt("height", height)
         .putInt("monster_spawn_block_light_limit", 0)
         .putInt("monster_spawn_light_level", 0);
 
@@ -1492,7 +1496,8 @@ public class LimboImpl implements Limbo {
   }
 
   private ChunkDataPacket createChunkData(VirtualChunk chunk, Dimension dimension) {
-    return new ChunkDataPacket(chunk.getFullChunkSnapshot(), dimension.hasLegacySkyLight(), dimension.getMaxSections());
+    return new ChunkDataPacket(chunk.getFullChunkSnapshot(), dimension.hasLegacySkyLight(),
+        Settings.IMP.MAIN.MIN_Y, Settings.IMP.MAIN.HEIGHT / 16);
   }
 
   public Integer getReadTimeout() {

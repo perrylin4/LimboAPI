@@ -20,6 +20,7 @@ package net.elytrium.limboapi.protocol.packets;
 import com.velocitypowered.api.network.ProtocolVersion;
 import java.util.List;
 import java.util.Map;
+import net.elytrium.limboapi.Settings;
 import net.elytrium.limboapi.api.chunk.Dimension;
 import net.elytrium.limboapi.api.chunk.data.ChunkSnapshot;
 import net.elytrium.limboapi.api.material.VirtualItem;
@@ -52,12 +53,13 @@ public class PacketFactoryImpl implements PacketFactory {
 
   @Override
   public Object createChunkDataPacket(ChunkSnapshot chunkSnapshot, boolean legacySkyLight, int maxSections) {
-    return new ChunkDataPacket(chunkSnapshot, legacySkyLight, maxSections);
+    // maxSections is ignored; the world height is configured globally via Settings.MAIN.MIN_Y/HEIGHT.
+    return new ChunkDataPacket(chunkSnapshot, legacySkyLight, Settings.IMP.MAIN.MIN_Y, Settings.IMP.MAIN.HEIGHT / 16);
   }
 
   @Override
   public Object createChunkDataPacket(ChunkSnapshot chunkSnapshot, Dimension dimension) {
-    return new ChunkDataPacket(chunkSnapshot, dimension.hasLegacySkyLight(), dimension.getMaxSections());
+    return new ChunkDataPacket(chunkSnapshot, dimension.hasLegacySkyLight(), Settings.IMP.MAIN.MIN_Y, Settings.IMP.MAIN.HEIGHT / 16);
   }
 
   @Override

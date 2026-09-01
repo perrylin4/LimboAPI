@@ -26,6 +26,7 @@ import net.elytrium.limboapi.api.chunk.VirtualBlockEntity;
 import net.elytrium.limboapi.api.chunk.VirtualChunk;
 import net.elytrium.limboapi.api.chunk.data.ChunkSnapshot;
 import net.elytrium.limboapi.api.chunk.data.LightSection;
+import net.elytrium.limboapi.Settings;
 import net.elytrium.limboapi.material.Biome;
 import net.elytrium.limboapi.server.world.SimpleBlock;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
@@ -41,9 +42,12 @@ public class SimpleChunk implements VirtualChunk {
   private final int posX;
   private final int posZ;
 
-  private final SimpleSection[] sections = new SimpleSection[16];
-  private final LightSection[] light = new LightSection[18];
-  private final VirtualBiome[] biomes = new VirtualBiome[1024];
+  private final int minY = Settings.IMP.MAIN.MIN_Y;
+  private final int sectionCount = Settings.IMP.MAIN.HEIGHT / 16;
+
+  private final SimpleSection[] sections = new SimpleSection[this.sectionCount];
+  private final LightSection[] light = new LightSection[this.sectionCount + 2];
+  private final VirtualBiome[] biomes = new VirtualBiome[this.sectionCount * MAX_BIOMES_PER_SECTION];
   private final List<VirtualBlockEntity.Entry> blockEntityEntries = new ArrayList<>();
 
   public SimpleChunk(int posX, int posZ) {
@@ -63,7 +67,7 @@ public class SimpleChunk implements VirtualChunk {
 
   @Override
   public void setBlock(int posX, int posY, int posZ, @Nullable VirtualBlock block) {
-    this.getSection(posY).setBlockAt(posX, posY & 15, posZ, block);
+    this.getSection(posY).setBlockAt(posX, (posY - this.minY) & 15, posZ, block);
   }
 
   @Override
@@ -99,13 +103,13 @@ public class SimpleChunk implements VirtualChunk {
     if (section == null) {
       return SimpleBlock.AIR;
     } else {
-      return section.getBlockAt(posX, posY & 15, posZ);
+      return section.getBlockAt(posX, (posY - this.minY) & 15, posZ);
     }
   }
 
   @Override
   public void setBiome2D(int posX, int posZ, @NonNull VirtualBiome biome) {
-    for (int posY = 0; posY < 256; posY += 4) {
+    for (int posY = this.minY; posY < this.minY + this.sectionCount * 16; posY += 4) {
       this.setBiome3D(posX, posY, posZ, biome);
     }
   }
@@ -123,26 +127,26 @@ public class SimpleChunk implements VirtualChunk {
 
   @Override
   public void setBlockLight(int posX, int posY, int posZ, byte light) {
-    this.getLightSection(posY).setBlockLight(posX, posY & 15, posZ, light);
+    this.getLightSection(posY).setBlockLight(posX, (posY - this.minY) & 15, posZ, light);
   }
 
   @Override
   public byte getBlockLight(int posX, int posY, int posZ) {
-    return this.getLightSection(posY).getBlockLight(posX, posY & 15, posZ);
+    return this.getLightSection(posY).getBlockLight(posX, (posY - this.minY) & 15, posZ);
   }
 
   @Override
   public void setSkyLight(int posX, int posY, int posZ, byte light) {
-    this.getLightSection(posY).setSkyLight(posX, posY & 15, posZ, light);
+    this.getLightSection(posY).setSkyLight(posX, (posY - this.minY) & 15, posZ, light);
   }
 
   @Override
   public byte getSkyLight(int posX, int posY, int posZ) {
-    return this.getLightSection(posY).getSkyLight(posX, posY & 15, posZ);
+    return this.getLightSection(posY).getSkyLight(posX, (posY - this.minY) & 15, posZ);
   }
 
   private LightSection getLightSection(int posY) {
-    return this.light[posY < 0 ? 0 : getSectionIndex(posY) + 1];
+    return this.light[posY < this.minY ? 0 : this.getSectionIndex(posY) + 1];
   }
 
   @Override
@@ -195,15 +199,23 @@ public class SimpleChunk implements VirtualChunk {
     }
 
     return new SimpleChunkSnapshot(this.posX, this.posZ, full, sectionsSnapshot, lightSnapshot,
-        Arrays.copyOf(this.biomes, this.biomes.length), List.copyOf(this.blockEntityEntries));
+        Arrays.copyOf(this.biomes, this.biomes.length), List.copyOf(this.blockEntityEntries), this.minY);
   }
 
-  private static int getBiomeIndex(int posX, int posY, int posZ) {
-    return (posY >> 2 & 63) << 4 | (posZ >> 2 & 3) << 2 | posX >> 2 & 3;
+  private int getBiomeIndex(int posX, int posY, int posZ) {
+    int sectionIndex = (posY - this.minY) >> 4;
+    int localBiomeIndex = ((posY - this.minY) >> 2 & 3) << 4 | (posZ >> 2 & 3) << 2 | (posX >> 2 & 3);
+    return sectionIndex * MAX_BIOMES_PER_SECTION + localBiomeIndex;
   }
 
-  private static int getSectionIndex(int posY) {
-    return posY >> 4;
+  private int getSectionIndex(int posY) {
+    int sectionIndex = (posY - this.minY) >> 4;
+    if (sectionIndex < 0 || sectionIndex >= this.sectionCount) {
+      throw new IllegalArgumentException("Y coordinate " + posY + " is outside the configured world bounds ["
+          + this.minY + ", " + (this.minY + this.sectionCount * 16) + ")");
+    }
+
+    return sectionIndex;
   }
 
   @Override

@@ -17,22 +17,32 @@ import net.elytrium.limboapi.api.chunk.data.ChunkSnapshot;
  */
 public class BiomeData {
 
-  private final int[] post115Biomes = new int[1024];
+  private static final int MAX_BIOMES_PER_SECTION = 4 * 4 * 4;
+  // 1.13 - 1.17 clients always use a fixed 256-block world (16 sections * 64 biomes per section).
+  private static final int LEGACY_BIOME_COUNT = 16 * MAX_BIOMES_PER_SECTION;
+
+  private final int[] post115Biomes = new int[LEGACY_BIOME_COUNT];
   private final byte[] pre115Biomes = new byte[256];
 
   public BiomeData(ChunkSnapshot chunk) {
     VirtualBiome[] biomes = chunk.getBiomes();
-    for (int i = 0; i < biomes.length; ++i) {
+    int sectionCount = biomes.length / MAX_BIOMES_PER_SECTION;
+    if (sectionCount == 0) {
+      sectionCount = 1;
+    }
+
+    for (int i = 0; i < Math.min(LEGACY_BIOME_COUNT, biomes.length); ++i) {
       this.post115Biomes[i] = biomes[i].getID();
     }
 
-    // Down sample 4x4x4 3D biomes to 2D XZ.
+    // Down sample 3D biomes to 2D XZ.
     Map<Integer, Integer> samples = new HashMap<>(64);
     for (int posX = 0; posX < 16; posX += 4) {
       for (int posZ = 0; posZ < 16; posZ += 4) {
         samples.clear();
-        for (int posY = 0; posY < 256; posY += 16) {
-          VirtualBiome biome = biomes[/*SimpleChunk.getBiomeIndex(posX, posY, posZ)*/(posY >> 2 & 63) << 4 | (posZ >> 2 & 3) << 2 | posX >> 2 & 3];
+        for (int section = 0; section < sectionCount; ++section) {
+          int index = section * MAX_BIOMES_PER_SECTION + ((posZ >> 2 & 3) << 2) + (posX >> 2 & 3);
+          VirtualBiome biome = biomes[index];
           samples.put(biome.getID(), samples.getOrDefault(biome.getID(), 0) + 1);
         }
         int id = samples.entrySet()

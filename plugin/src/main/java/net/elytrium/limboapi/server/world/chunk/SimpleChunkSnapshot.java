@@ -34,9 +34,10 @@ public class SimpleChunkSnapshot implements ChunkSnapshot {
   private final LightSection[] light;
   private final VirtualBiome[] biomes;
   private final List<VirtualBlockEntity.Entry> blockEntityEntries;
+  private final int minY;
 
   public SimpleChunkSnapshot(int posX, int posZ, boolean fullChunk, SimpleSection[] sections, LightSection[] light,
-                             VirtualBiome[] biomes, List<VirtualBlockEntity.Entry> blockEntityEntries) {
+                             VirtualBiome[] biomes, List<VirtualBlockEntity.Entry> blockEntityEntries, int minY) {
     this.posX = posX;
     this.posZ = posZ;
     this.fullChunk = fullChunk;
@@ -44,12 +45,18 @@ public class SimpleChunkSnapshot implements ChunkSnapshot {
     this.light = light;
     this.biomes = biomes;
     this.blockEntityEntries = blockEntityEntries;
+    this.minY = minY;
   }
 
   @Override
   public VirtualBlock getBlock(int posX, int posY, int posZ) {
-    SimpleSection section = this.sections[posY >> 4];
-    return section == null ? SimpleBlock.AIR : section.getBlockAt(posX, posY & 15, posZ);
+    int sectionIndex = (posY - this.minY) >> 4;
+    if (sectionIndex < 0 || sectionIndex >= this.sections.length) {
+      return SimpleBlock.AIR;
+    }
+
+    SimpleSection section = this.sections[sectionIndex];
+    return section == null ? SimpleBlock.AIR : section.getBlockAt(posX, (posY - this.minY) & 15, posZ);
   }
 
   @Override

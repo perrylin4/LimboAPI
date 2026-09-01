@@ -107,6 +107,17 @@ public class Settings extends YamlConfig {
     public int SIMULATION_DISTANCE = 9;
 
     @Comment({
+        "World height configuration (applied to 1.18+ clients only, requires proxy restart to take effect).",
+        "MIN_Y must be a multiple of 16, HEIGHT must be a positive multiple of 16.",
+        "Vanilla 1.18+ clients only accept MIN_Y in [-2032, 2032] and HEIGHT in [16, 4064] with",
+        "MIN_Y + HEIGHT <= 4064 (e.g. -2032..2032 is the maximum span that vanilla accepts).",
+        "Values outside this range (such as MIN_Y=-2048, HEIGHT=4096) require modified clients.",
+        "Pre-1.18 clients always see a fixed 0..255 world (16 sections)."
+    })
+    public int MIN_Y = 0;
+    public int HEIGHT = 256;
+
+    @Comment({
         "How many chunks we should send when a player spawns.",
         " 0 = send no chunks on spawn.",
         " 1 = send only the spawn chunk.",

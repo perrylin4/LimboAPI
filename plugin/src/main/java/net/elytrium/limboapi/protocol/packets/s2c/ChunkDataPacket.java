@@ -48,27 +48,32 @@ import net.kyori.adventure.nbt.LongArrayBinaryTag;
 
 public class ChunkDataPacket implements MinecraftPacket {
 
+  private static final int SECTION_HEIGHT = 16;
+  private static final int LEGACY_SECTION_COUNT = 16; // 1.17 and older clients always use a fixed 256-block world.
+
   private final ChunkSnapshot chunk;
   private final NetworkSection[] sections;
-  private final int mask;
+  private final BitSet mask;
   private final int maxSections;
+  private final int minY;
   private final int nonNullSections;
   private final BiomeData biomeData;
   private final CompoundBinaryTag heightmap114;
   private final CompoundBinaryTag heightmap116;
   private final Map<Integer, long[]> heightmap1215;
 
-  public ChunkDataPacket(ChunkSnapshot chunkSnapshot, boolean hasLegacySkyLight, int maxSections) {
-    this.maxSections = maxSections;
-    this.sections = new NetworkSection[maxSections];
+  public ChunkDataPacket(ChunkSnapshot chunkSnapshot, boolean hasLegacySkyLight, int minY, int sectionCount) {
+    this.maxSections = sectionCount;
+    this.minY = minY;
+    this.sections = new NetworkSection[sectionCount];
 
     this.chunk = chunkSnapshot;
-    int mask = 0;
+    this.mask = new BitSet(sectionCount);
     int nonNullSections = 0;
     for (int i = 0; i < this.chunk.getSections().length; ++i) {
       if (this.chunk.getSections()[i] != null) {
         ++nonNullSections;
-        mask |= 1 << i;
+        this.mask.set(i);
         LightSection light = this.chunk.getLight()[i];
         NetworkSection section = new NetworkSection(
             i,
@@ -82,7 +87,6 @@ public class ChunkDataPacket implements MinecraftPacket {
     }
 
     this.nonNullSections = nonNullSections;
-    this.mask = mask;
     this.heightmap114 = this.createHeightMap(true);
     this.heightmap116 = this.createHeightMap(false);
     this.heightmap1215 = new HashMap<>();
@@ -122,7 +126,7 @@ public class ChunkDataPacket implements MinecraftPacket {
     if (version.compareTo(ProtocolVersion.MINECRAFT_1_17) >= 0) {
       // 1.17 mask.
       if (version.compareTo(ProtocolVersion.MINECRAFT_1_17_1) <= 0) {
-        long[] mask = this.create117Mask();
+        long[] mask = this.createMask(version);
         ProtocolUtils.writeVarInt(buf, mask.length);
         for (long l : mask) {
           buf.writeLong(l);
@@ -137,11 +141,12 @@ public class ChunkDataPacket implements MinecraftPacket {
 
       // Mask.
       if (version.compareTo(ProtocolVersion.MINECRAFT_1_8) > 0) {
-        ProtocolUtils.writeVarInt(buf, this.mask);
+        ProtocolUtils.writeVarInt(buf, this.getLegacyMask());
       } else {
         // OptiFine devs have over-optimized the chunk loading by breaking loading of void-chunks.
         // We are changing void-chunks length here, and OptiFine client thinks that the chunk is not void-alike.
-        buf.writeShort(this.mask == 0 ? 1 : this.mask);
+        int legacyMask = this.getLegacyMask();
+        buf.writeShort(legacyMask == 0 ? 1 : legacyMask);
       }
     }
 
@@ -202,7 +207,7 @@ public class ChunkDataPacket implements MinecraftPacket {
           }
         }
         if (version.compareTo(ProtocolVersion.MINECRAFT_1_17_1) > 0) {
-          long[] mask = this.create117Mask();
+          long[] mask = this.createMask(version);
           if (version.compareTo(ProtocolVersion.MINECRAFT_1_20) < 0) {
             buf.writeBoolean(true); // Trust edges.
           }
@@ -233,9 +238,28 @@ public class ChunkDataPacket implements MinecraftPacket {
     }
   }
 
+  private int getEffectiveSectionCount(ProtocolVersion version) {
+    if (version.compareTo(ProtocolVersion.MINECRAFT_1_18) >= 0) {
+      return this.maxSections;
+    }
+
+    return Math.min(LEGACY_SECTION_COUNT, this.maxSections);
+  }
+
+  private long[] createMask(ProtocolVersion version) {
+    return this.mask.get(0, this.getEffectiveSectionCount(version)).toLongArray();
+  }
+
+  private int getLegacyMask() {
+    long[] mask = this.mask.get(0, LEGACY_SECTION_COUNT).toLongArray();
+    return mask.length == 0 ? 0 : (int) mask[0];
+  }
+
   private ByteBuf createChunkData(ProtocolVersion version) {
+    int effectiveSectionCount = this.getEffectiveSectionCount(version);
     int dataLength = 0;
-    for (NetworkSection networkSection : this.sections) {
+    for (int i = 0; i < effectiveSectionCount; ++i) {
+      NetworkSection networkSection = this.sections[i];
       if (networkSection != null) {
         dataLength += networkSection.getDataLength(version);
       }
@@ -251,7 +275,8 @@ public class ChunkDataPacket implements MinecraftPacket {
 
     ByteBuf data = Unpooled.buffer(dataLength);
     for (int pass = 0; pass < 4; ++pass) {
-      for (NetworkSection section : this.sections) {
+      for (int i = 0; i < effectiveSectionCount; ++i) {
+        NetworkSection section = this.sections[i];
         if (section != null) {
           section.writeData(data, pass, version);
         } else if (pass == 0 && version.compareTo(ProtocolVersion.MINECRAFT_1_18) >= 0) {
@@ -291,18 +316,20 @@ public class ChunkDataPacket implements MinecraftPacket {
   }
 
   private CompoundBinaryTag createHeightMap(boolean pre116) {
-    CompactStorage surface = pre116 ? new BitStorage19(9, 256) : new BitStorage116(9, 256);
-    CompactStorage motionBlocking = pre116 ? new BitStorage19(9, 256) : new BitStorage116(9, 256);
+    int height = this.maxSections * SECTION_HEIGHT;
+    int bitsPerEntry = Math.max(1, 32 - Integer.numberOfLeadingZeros(height));
+    CompactStorage surface = pre116 ? new BitStorage19(bitsPerEntry, 256) : new BitStorage116(bitsPerEntry, 256);
+    CompactStorage motionBlocking = pre116 ? new BitStorage19(bitsPerEntry, 256) : new BitStorage116(bitsPerEntry, 256);
 
-    for (int posY = 0; posY < 256; ++posY) {
+    for (int posY = this.minY; posY < this.minY + height; ++posY) {
       for (int posX = 0; posX < 16; ++posX) {
         for (int posZ = 0; posZ < 16; ++posZ) {
           VirtualBlock block = this.chunk.getBlock(posX, posY, posZ);
           if (!block.isAir()) {
-            surface.set(posX + (posZ << 4), posY + 1);
+            surface.set(posX + (posZ << 4), posY - this.minY + 1);
           }
           if (block.isMotionBlocking()) {
-            motionBlocking.set(posX + (posZ << 4), posY + 1);
+            motionBlocking.set(posX + (posZ << 4), posY - this.minY + 1);
           }
         }
       }
@@ -312,14 +339,6 @@ public class ChunkDataPacket implements MinecraftPacket {
         .putLongArray("MOTION_BLOCKING", motionBlocking.getData())
         .putLongArray("WORLD_SURFACE", surface.getData())
         .build();
-  }
-
-  private long[] create117Mask() {
-    return BitSet.valueOf(
-        new long[] {
-            this.mask
-        }
-    ).toLongArray();
   }
 
   // TODO: Use velocity compressor.
