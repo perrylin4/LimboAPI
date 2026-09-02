@@ -20,13 +20,13 @@ package net.elytrium.limboapi.server.world.chunk;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.elytrium.limboapi.Settings;
 import net.elytrium.limboapi.api.chunk.VirtualBiome;
 import net.elytrium.limboapi.api.chunk.VirtualBlock;
 import net.elytrium.limboapi.api.chunk.VirtualBlockEntity;
 import net.elytrium.limboapi.api.chunk.VirtualChunk;
 import net.elytrium.limboapi.api.chunk.data.ChunkSnapshot;
 import net.elytrium.limboapi.api.chunk.data.LightSection;
-import net.elytrium.limboapi.Settings;
 import net.elytrium.limboapi.material.Biome;
 import net.elytrium.limboapi.server.world.SimpleBlock;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
@@ -86,7 +86,7 @@ public class SimpleChunk implements VirtualChunk {
   }
 
   private SimpleSection getSection(int posY) {
-    int sectionIndex = getSectionIndex(posY);
+    int sectionIndex = this.getSectionIndex(posY);
     SimpleSection section = this.sections[sectionIndex];
     if (section == null) {
       section = new SimpleSection();
@@ -99,7 +99,7 @@ public class SimpleChunk implements VirtualChunk {
   @NonNull
   @Override
   public VirtualBlock getBlock(int posX, int posY, int posZ) {
-    SimpleSection section = this.sections[getSectionIndex(posY)];
+    SimpleSection section = this.sections[this.getSectionIndex(posY)];
     if (section == null) {
       return SimpleBlock.AIR;
     } else {
@@ -116,13 +116,13 @@ public class SimpleChunk implements VirtualChunk {
 
   @Override
   public void setBiome3D(int posX, int posY, int posZ, @NonNull VirtualBiome biome) {
-    this.biomes[getBiomeIndex(posX, posY, posZ)] = biome;
+    this.biomes[this.getBiomeIndex(posX, posY, posZ)] = biome;
   }
 
   @NonNull
   @Override
   public VirtualBiome getBiome(int posX, int posY, int posZ) {
-    return this.biomes[getBiomeIndex(posX, posY, posZ)];
+    return this.biomes[this.getBiomeIndex(posX, posY, posZ)];
   }
 
   @Override

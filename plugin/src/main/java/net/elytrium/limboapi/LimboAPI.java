@@ -266,11 +266,15 @@ public class LimboAPI implements LimboFactory {
     this.metricsFactory.make(this, 12530);
 
     if (Settings.IMP.MAIN.CHECK_FOR_UPDATES) {
-      if (!UpdatesChecker.checkVersionByURL("https://raw.githubusercontent.com/Elytrium/LimboAPI/master/VERSION", Settings.IMP.VERSION)) {
-        LOGGER.error("****************************************");
-        LOGGER.warn("The new LimboAPI update was found, please update.");
-        LOGGER.error("https://github.com/Elytrium/LimboAPI/releases/");
-        LOGGER.error("****************************************");
+      try {
+        if (!UpdatesChecker.checkVersionByURL("https://raw.githubusercontent.com/Elytrium/LimboAPI/master/VERSION", Settings.IMP.VERSION)) {
+          LOGGER.error("****************************************");
+          LOGGER.warn("The new LimboAPI update was found, please update.");
+          LOGGER.error("https://github.com/Elytrium/LimboAPI/releases/");
+          LOGGER.error("****************************************");
+        }
+      } catch (Exception exception) {
+        LOGGER.warn("Unable to check for updates: {}: {}", exception.getClass().getSimpleName(), exception.getMessage());
       }
     }
   }

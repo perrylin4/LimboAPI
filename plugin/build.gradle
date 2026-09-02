@@ -47,6 +47,13 @@ shadowJar() {
   exclude("META-INF/versions/**")
   exclude("net/kyori/**")
 
+  // The Elytrium Velocity fork's annotation processor writes velocity-plugin.json at the jar root,
+  // while official Velocity expects it under META-INF/velocity/. Ship both locations for compatibility.
+  from(new File(this.getLayout().getBuildDirectory().get().getAsFile(), "classes/java/main")) {
+    include("velocity-plugin.json")
+    into("META-INF/velocity")
+  }
+
   relocate("org.bstats", "net.elytrium.limboapi.thirdparty.org.bstats")
   relocate("net.elytrium.fastprepare", "net.elytrium.limboapi.thirdparty.fastprepare")
   relocate("net.elytrium.commons.velocity", "net.elytrium.limboapi.thirdparty.commons.velocity")
@@ -148,9 +155,7 @@ enum MinecraftVersion {
   MINECRAFT_1_21_6(771),
   MINECRAFT_1_21_7(772),
   MINECRAFT_1_21_9(773),
-  MINECRAFT_1_21_11(774),
-  MINECRAFT_26_1(775),
-  MINECRAFT_26_2(776)
+  MINECRAFT_1_21_11(774)
 
   public static final List<MinecraftVersion> WORLD_VERSIONS = List.of(
     MINECRAFT_1_13,
@@ -172,9 +177,7 @@ enum MinecraftVersion {
     MINECRAFT_1_21_6,
     MINECRAFT_1_21_7,
     MINECRAFT_1_21_9,
-    MINECRAFT_1_21_11,
-    MINECRAFT_26_1,
-    MINECRAFT_26_2
+    MINECRAFT_1_21_11
   )
 
   public static final MinecraftVersion MINIMUM_VERSION = MINECRAFT_1_7_2
@@ -301,7 +304,7 @@ File generateData(MinecraftVersion version) {
     command = "\"%s\" -cp \"${jarFile.getAbsolutePath()}\" net.minecraft.data.Main --reports --server"
   }
 
-  List<String> commandLine;
+  List<String> commandLine
   if (System.getProperty("os.name").toLowerCase().contains("win")) {
     File java = new File(System.getProperty("java.home"), "bin/java.exe")
     commandLine = ["cmd", "/c", String.format(command, java)]
@@ -556,8 +559,8 @@ static Map<String, Map<String, String>> sortRegistryMapping(Map<String, Map<Stri
 }
 
 void generateRegistryMapping(String target, File targetDir, Map<MinecraftVersion, Object> registriesReports) {
-  File targetFile = new File(targetDir, "${target}s.json");
-  File targetMappingFile = new File(targetDir, "${target}s_mapping.json");
+  File targetFile = new File(targetDir, "${target}s.json")
+  File targetMappingFile = new File(targetDir, "${target}s_mapping.json")
   if (checkIsCacheValid(targetFile) || checkIsCacheValid(targetMappingFile)) {
     this.println("> Generating ${target}s...")
 
@@ -607,7 +610,7 @@ void generateRegistryMappings(File targetDir, Map<MinecraftVersion, Object> regi
   this.generateRegistryMapping("data_component_type", targetDir, registriesReports
           .findAll({ e -> e.getKey() >= MinecraftVersion.MINECRAFT_1_20_5 }))
 
-  File blockEntitiesMappingFile = new File(targetDir, "blockentities_mapping.json");
+  File blockEntitiesMappingFile = new File(targetDir, "blockentities_mapping.json")
 
   if (checkIsCacheValid(blockEntitiesMappingFile)) {
     this.println("> Generating blockentities mapping...")
@@ -681,7 +684,7 @@ static Map<String, Map<String, List<String>>> getTags(File tagDir, Map<String, S
 }
 
 void generateTags(File targetDir, Map<MinecraftVersion, File> tagDirs) {
-  File tagsFile = new File(targetDir, "tags.json");
+  File tagsFile = new File(targetDir, "tags.json")
   if (checkIsCacheValid(tagsFile)) {
       this.println("> Generating tags...")
 
