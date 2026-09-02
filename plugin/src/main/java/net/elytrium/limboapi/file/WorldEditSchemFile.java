@@ -20,12 +20,16 @@ package net.elytrium.limboapi.file;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.IntStream;
 import net.elytrium.limboapi.LimboAPI;
 import net.elytrium.limboapi.api.LimboFactory;
 import net.elytrium.limboapi.api.chunk.VirtualBlock;
@@ -40,15 +44,21 @@ import org.slf4j.Logger;
 
 public class WorldEditSchemFile implements WorldFile {
 
+  private static final List<String> AIR_BLOCKS = List.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air");
+
   private final short width;
   private final short height;
   private final short length;
-  private final int[] blocks;
   private final CompoundBinaryTag palette;
   private final ListBinaryTag blockEntities;
 
-  public WorldEditSchemFile(CompoundBinaryTag rootTag) {
+  // Sparse, per-chunk storage of only the non-air blocks: each chunk maps to a list of
+  // [localX, worldY, localZ, paletteIndex] int arrays (one per non-air block). This avoids
+  // materializing the whole width*height*length bounding box (which for large mostly-air schematics
+  // used to be an int array of several GB, even when the compressed .schem file is only a couple of MB).
+  private final Map<Long, List<int[]>> chunks = new HashMap<>();
 
+  public WorldEditSchemFile(CompoundBinaryTag rootTag) {
     ByteBuf blockDataBuf;
 
     if (rootTag.contains("Width")) {
@@ -81,78 +91,91 @@ public class WorldEditSchemFile implements WorldFile {
       throw new IllegalArgumentException("Invalid worldedit file format. Please open an issue on GitHub.");
     }
 
-    this.blocks = new int[this.width * this.height * this.length];
-    for (int i = 0; i < this.blocks.length; i++) {
-      this.blocks[i] = ProtocolUtils.readVarInt(blockDataBuf);
+    int paletteSize = this.palette.keySet().size();
+    boolean[] isAirIndex = new boolean[Math.max(1, paletteSize)];
+    for (String air : AIR_BLOCKS) {
+      if (this.palette.keySet().contains(air)) {
+        int airIndex = ((IntBinaryTag) Objects.requireNonNull(this.palette.get(air))).value();
+        if (airIndex >= 0 && airIndex < isAirIndex.length) {
+          isAirIndex[airIndex] = true;
+        }
+      }
     }
+
+    Logger logger = LimboAPI.getLogger();
+    logger.info("Decoding schematic block data into a sparse chunk structure.");
+    long totalBlocks = (long) this.width * this.height * this.length;
+    long widthByLength = (long) this.width * this.length;
+    for (long index = 0; index < totalBlocks; index++) {
+      int paletteIndex = ProtocolUtils.readVarInt(blockDataBuf);
+      if (paletteIndex >= 0 && paletteIndex < isAirIndex.length && isAirIndex[paletteIndex]) {
+        continue;
+      }
+
+      int posX = (int) (index % this.width);
+      int posZ = (int) ((index / this.width) % this.length);
+      int posY = (int) (index / widthByLength);
+
+      long chunkKey = getChunkIndex(posX >> 4, posZ >> 4);
+      this.chunks.computeIfAbsent(chunkKey, key -> new ArrayList<>())
+          .add(new int[] {posX & 15, posY, posZ & 15, paletteIndex});
+    }
+
+    logger.info("Decoded {} chunks containing non-air blocks.", this.chunks.size());
   }
 
   @Override
   public void toWorld(LimboFactory factory, VirtualWorld world, int offsetX, int offsetY, int offsetZ, int lightLevel) {
     int paletteSize = this.palette.keySet().size();
-    int tilesX = (this.width + 15) / 16;
-    int tilesZ = (this.length + 15) / 16;
-    int totalTiles = tilesX * tilesZ;
-    AtomicInteger parsedPalette = new AtomicInteger(0);
-    AtomicInteger completedTiles = new AtomicInteger(0);
     final Logger logger = LimboAPI.getLogger();
+    AtomicInteger completedChunks = new AtomicInteger(0);
 
-    // Report import progress every 10 seconds until the import finishes. It covers both the
-    // palette-parsing phase and the chunk-filling phase.
     ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
       Thread thread = new Thread(runnable, "LimboAPI-world-import-progress");
       thread.setDaemon(true);
       return thread;
     });
     final ScheduledFuture<?> progressTask = scheduler.scheduleAtFixedRate(() -> {
-      int paletteDone = parsedPalette.get();
-      int tilesDone = completedTiles.get();
-      logger.info(String.format(
-          "World import progress: palette %d/%d (%.1f%%), chunk tiles %d/%d (%.1f%%)",
-          paletteDone, paletteSize, paletteDone * 100.0 / Math.max(1, paletteSize),
-          tilesDone, totalTiles, tilesDone * 100.0 / Math.max(1, totalTiles)));
+      int done = completedChunks.get();
+      logger.info(String.format("World import progress: %.1f%% (%d/%d chunks)",
+          done * 100.0 / Math.max(1, this.chunks.size()), done, this.chunks.size()));
     }, 10, 10, TimeUnit.SECONDS);
 
     logger.info("Parsing NBT into paletted blocks.");
     VirtualBlock[] palettedBlocks = new VirtualBlock[paletteSize];
-    this.palette.forEach((entry) -> {
-      palettedBlocks[((IntBinaryTag) entry.getValue()).value()] = factory.createSimpleBlock(entry.getKey());
-      parsedPalette.incrementAndGet();
-    });
+    this.palette.forEach((entry) ->
+        palettedBlocks[((IntBinaryTag) entry.getValue()).value()] = factory.createSimpleBlock(entry.getKey())
+    );
     logger.info("Palette parsed: 100% ({}/{}).", paletteSize, paletteSize);
+
     logger.info("Writing paletted blocks into chunks.");
+    for (Map.Entry<Long, List<int[]>> entry : this.chunks.entrySet()) {
+      long chunkKey = entry.getKey();
+      int chunkX = (int) (chunkKey >> 32);
+      int chunkZ = (int) chunkKey;
 
-    // Fill the world chunk by chunk (16x16 tiles), in parallel. Each thread owns whole tiles, so a
-    // SimpleChunk is never written by more than one thread at a time (SimpleWorld is now safe for
-    // concurrent chunk creation). Air blocks are skipped, so fully empty sections are never allocated,
-    // which speeds up and reduces RAM usage of large/tall schematic imports considerably.
-    IntStream.range(0, totalTiles).parallel().forEach(tileIndex -> {
-      int chunkOffsetX = (tileIndex / tilesZ) * 16;
-      int chunkOffsetZ = (tileIndex % tilesZ) * 16;
-      int tileWidth = Math.min(16, this.width - chunkOffsetX);
-      int tileLength = Math.min(16, this.length - chunkOffsetZ);
+      VirtualChunk chunk = world.getChunkOrNew(offsetX + chunkX * 16, offsetZ + chunkZ * 16);
 
-      VirtualChunk chunk = world.getChunkOrNew(offsetX + chunkOffsetX, offsetZ + chunkOffsetZ);
-      for (int posX = 0; posX < tileWidth; ++posX) {
-        for (int posZ = 0; posZ < tileLength; ++posZ) {
-          for (int posY = 0; posY < this.height; ++posY) {
-            int index = (posY * this.length + chunkOffsetZ + posZ) * this.width + chunkOffsetX + posX;
-            VirtualBlock block = palettedBlocks[this.blocks[index]];
-            if (!block.isAir()) {
-              chunk.setBlock(posX, posY + offsetY, posZ, block);
-            }
-          }
+      for (int[] blockData : entry.getValue()) {
+        int paletteIndex = blockData[3];
+        if (paletteIndex < 0 || paletteIndex >= palettedBlocks.length) {
+          continue;
+        }
+
+        VirtualBlock block = palettedBlocks[paletteIndex];
+        if (!block.isAir()) {
+          chunk.setBlock(blockData[0], blockData[1] + offsetY, blockData[2], block);
         }
       }
 
-      completedTiles.incrementAndGet();
-    });
+      completedChunks.incrementAndGet();
+    }
 
     progressTask.cancel(false);
     scheduler.shutdown();
-    logger.info("World import finished: 100% ({} palette entries, {} chunk tiles).", paletteSize, totalTiles);
-    logger.info("Writing block entities into chunks...");
+    logger.info("World import finished: 100% ({} chunks).", this.chunks.size());
 
+    logger.info("Writing block entities into chunks...");
     for (BinaryTag blockEntity : this.blockEntities) {
       CompoundBinaryTag blockEntityData = (CompoundBinaryTag) blockEntity;
       int[] posTag = blockEntityData.getIntArray("Pos");
@@ -163,8 +186,13 @@ public class WorldEditSchemFile implements WorldFile {
           blockEntityData,
           factory.getBlockEntity(blockEntityData.getString("Id")));
     }
+
     logger.info("Filling sky light...");
     world.fillSkyLight(lightLevel);
     logger.info("World conversion finished.");
+  }
+
+  private static long getChunkIndex(int chunkX, int chunkZ) {
+    return (long) chunkX << 32 | chunkZ & 0xFFFFFFFFL;
   }
 }
