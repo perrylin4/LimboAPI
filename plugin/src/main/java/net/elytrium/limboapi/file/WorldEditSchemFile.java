@@ -22,6 +22,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import net.elytrium.limboapi.api.LimboFactory;
 import net.elytrium.limboapi.api.chunk.VirtualBlock;
+import net.elytrium.limboapi.api.chunk.VirtualChunk;
 import net.elytrium.limboapi.api.chunk.VirtualWorld;
 import net.elytrium.limboapi.api.file.WorldFile;
 import net.kyori.adventure.nbt.BinaryTag;
@@ -83,11 +84,26 @@ public class WorldEditSchemFile implements WorldFile {
     VirtualBlock[] palettedBlocks = new VirtualBlock[this.palette.keySet().size()];
     this.palette.forEach((entry) -> palettedBlocks[((IntBinaryTag) entry.getValue()).value()] = factory.createSimpleBlock(entry.getKey()));
 
-    for (int posX = 0; posX < this.width; ++posX) {
-      for (int posY = 0; posY < this.height; ++posY) {
-        for (int posZ = 0; posZ < this.length; ++posZ) {
-          int index = (posY * this.length + posZ) * this.width + posX;
-          world.setBlock(posX + offsetX, posY + offsetY, posZ + offsetZ, palettedBlocks[this.blocks[index]]);
+    // Fill the world chunk by chunk instead of block by block: a single chunk lookup per 16x16 tile
+    // (world.setBlock would otherwise do a 3x3 hash-map lookup per block) and skip air blocks entirely.
+    // Sections that end up with no blocks stay unallocated, which speeds up and reduces RAM usage of
+    // large/tall schematic imports considerably.
+    for (int chunkOffsetX = 0; chunkOffsetX < this.width; chunkOffsetX += 16) {
+      int tileWidth = Math.min(16, this.width - chunkOffsetX);
+      for (int chunkOffsetZ = 0; chunkOffsetZ < this.length; chunkOffsetZ += 16) {
+        int tileLength = Math.min(16, this.length - chunkOffsetZ);
+
+        VirtualChunk chunk = world.getChunkOrNew(offsetX + chunkOffsetX, offsetZ + chunkOffsetZ);
+        for (int posX = 0; posX < tileWidth; ++posX) {
+          for (int posZ = 0; posZ < tileLength; ++posZ) {
+            for (int posY = 0; posY < this.height; ++posY) {
+              int index = (posY * this.length + chunkOffsetZ + posZ) * this.width + chunkOffsetX + posX;
+              VirtualBlock block = palettedBlocks[this.blocks[index]];
+              if (!block.isAir()) {
+                chunk.setBlock(posX, posY + offsetY, posZ, block);
+              }
+            }
+          }
         }
       }
     }

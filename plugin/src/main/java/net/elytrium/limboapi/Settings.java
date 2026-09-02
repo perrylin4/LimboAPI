@@ -123,12 +123,20 @@ public class Settings extends YamlConfig {
         " 1 = send only the spawn chunk.",
         " 2 = send the spawn chunk and chunks next to the spawn chunk.",
         " 3 = send the spawn chunk, chunks next to the spawn chunk and next to these chunks.",
-        " and so on.."
+        " and so on..",
+        "Raised to match VIEW_DISTANCE so the player instantly sees all rendered terrain,",
+        "including for large imported worlds. Chunks beyond this radius are streamed to the",
+        "player at CHUNKS_PER_TICK. Memory note: prepared chunks are built once and shared",
+        "between all players, but a very large radius on a very large world increases RAM usage."
     })
-    public int CHUNK_RADIUS_SEND_ON_SPAWN = 2;
+    public int CHUNK_RADIUS_SEND_ON_SPAWN = 10;
 
-    @Comment("How many chunks we should send per tick")
-    public int CHUNKS_PER_TICK = 16;
+    @Comment({
+        "How many chunks we should send per 50ms tick while the world is being streamed to the player.",
+        "Raised from 16 to 128 so large imported worlds finish loading much faster. Increase it",
+        "further for very large worlds (at the cost of RAM and bandwidth)."
+    })
+    public int CHUNKS_PER_TICK = 128;
 
     @Comment("Maximum delay for receiving ChatSession packet (for online-mode client-side race condition mitigation)")
     public int CHAT_SESSION_PACKET_TIMEOUT = 5000;
