@@ -20,10 +20,10 @@ package net.elytrium.limboapi.server.world;
 import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import net.elytrium.limboapi.api.chunk.Dimension;
@@ -40,7 +40,11 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 public class SimpleWorld implements VirtualWorld {
 
-  private final Map<Long, SimpleChunk> chunks = new HashMap<>();
+  // ConcurrentHashMap so a schematic/world can be imported from multiple threads at once.
+  // Thread-safety contract: each SimpleChunk must only be WRITTEN by one thread at a time
+  // (importers should process whole 16x16 chunk tiles per thread), while the map itself and
+  // the chunk-neighbor creation below are safe to touch concurrently.
+  private final Map<Long, SimpleChunk> chunks = new ConcurrentHashMap<>();
   private final List<List<VirtualChunk>> distanceChunkMap = new ArrayList<>();
   @NonNull
   private final Dimension dimension;
@@ -150,31 +154,45 @@ public class SimpleWorld implements VirtualWorld {
     posX = getChunkXZ(posX);
     posZ = getChunkXZ(posZ);
 
+    SimpleChunk chunk = null;
     // Modern Sodium versions don't load chunks if their "neighbours" are unloaded.
     // We are fixing this problem there by generating all the "neighbours".
     for (int chunkX = posX - 1; chunkX <= posX + 1; ++chunkX) {
       for (int chunkZ = posZ - 1; chunkZ <= posZ + 1; ++chunkZ) {
-        this.localCreateChunk(chunkX, chunkZ);
+        SimpleChunk created = this.localCreateChunk(chunkX, chunkZ);
+        if (chunkX == posX && chunkZ == posZ) {
+          chunk = created;
+        }
       }
     }
 
-    return this.chunks.get(getChunkIndex(posX, posZ));
+    return chunk;
   }
 
-  private void localCreateChunk(int posX, int posZ) {
+  private SimpleChunk localCreateChunk(int posX, int posZ) {
     long index = getChunkIndex(posX, posZ);
-    if (!this.chunks.containsKey(index)) {
-      SimpleChunk chunk = new SimpleChunk(posX, posZ, this.defaultBiome);
+    SimpleChunk chunk = this.chunks.get(index);
+    if (chunk != null) {
+      return chunk;
+    }
 
-      this.chunks.put(index, chunk);
+    SimpleChunk newChunk = new SimpleChunk(posX, posZ, this.defaultBiome);
+    SimpleChunk previous = this.chunks.putIfAbsent(index, newChunk);
+    if (previous != null) {
+      // Another thread created this chunk first; use the stored instance so that no blocks are lost.
+      return previous;
+    }
 
-      int distance = this.getDistanceToSpawn(chunk);
+    synchronized (this.distanceChunkMap) {
+      int distance = this.getDistanceToSpawn(newChunk);
       for (int i = this.distanceChunkMap.size(); i <= distance; i++) {
         this.distanceChunkMap.add(new LinkedList<>());
       }
 
-      this.distanceChunkMap.get(distance).add(chunk);
+      this.distanceChunkMap.get(distance).add(newChunk);
     }
+
+    return newChunk;
   }
 
   @NonNull

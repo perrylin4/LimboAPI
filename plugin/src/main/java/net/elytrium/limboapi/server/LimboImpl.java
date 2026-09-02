@@ -119,6 +119,7 @@ import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.kyori.adventure.nbt.ListBinaryTag;
 import net.kyori.adventure.nbt.StringBinaryTag;
 import net.kyori.adventure.text.Component;
+import org.slf4j.Logger;
 
 public class LimboImpl implements Limbo {
 
@@ -176,7 +177,10 @@ public class LimboImpl implements Limbo {
   private boolean reducedDebugInfo = Settings.IMP.MAIN.REDUCED_DEBUG_INFO;
   private int viewDistance = Settings.IMP.MAIN.VIEW_DISTANCE;
   private int simulationDistance = Settings.IMP.MAIN.SIMULATION_DISTANCE;
-  private volatile boolean built = true;
+  // Whether the prepared packets (join game, chunks, etc.) are up to date. Config setters mark this
+  // false; it becomes true again after refresh(). Building is deferred to build()/the first
+  // spawnPlayer() call, so createLimbo() itself stays cheap even for very large worlds.
+  private volatile boolean built = false;
   private boolean disposeScheduled = false;
 
   public LimboImpl(LimboAPI plugin, VirtualWorld world) {
@@ -184,10 +188,15 @@ public class LimboImpl implements Limbo {
     this.world = world;
     this.localStateRegistry = LimboProtocol.getLimboStateRegistry();
 
-    this.refresh();
+    // Do NOT pre-build here: the configuration setters below would invalidate the build anyway, and
+    // rebuilding a large world twice (once here, once after the setters) is very expensive. Callers
+    // that need the packets ready can call build() explicitly (e.g. at startup, on a background
+    // thread); otherwise the first spawnPlayer() call builds lazily.
   }
 
   protected void refresh() {
+    Logger logger = LimboAPI.getLogger();
+    logger.info("Preparing join game packets...");
     JoinGamePacket legacyJoinGame = this.createLegacyJoinGamePacket();
     JoinGamePacket joinGame = this.createJoinGamePacket(ProtocolVersion.MINECRAFT_1_16);
     JoinGamePacket joinGame1162 = this.createJoinGamePacket(ProtocolVersion.MINECRAFT_1_16_2);
@@ -238,6 +247,7 @@ public class LimboImpl implements Limbo {
     this.safeRejoinPackets = this.addPostJoin(this.plugin.createPreparedPacket().prepare(this.createSafeClientServerSwitch(legacyJoinGame)));
     this.postJoinPackets = this.addPostJoin(this.plugin.createPreparedPacket());
 
+    logger.info("Preparing config packets...");
     this.configTransitionPackets = this.plugin.createPreparedPacket()
         .prepare(StartUpdatePacket.INSTANCE, ProtocolVersion.MINECRAFT_1_20_2)
         .build();
@@ -259,8 +269,11 @@ public class LimboImpl implements Limbo {
     configPackets.prepare(FinishedUpdatePacket.INSTANCE, ProtocolVersion.MINECRAFT_1_20_2);
     this.configPackets = configPackets.build();
 
+    logger.info("Preparing chunk packets...");
     this.firstChunks = this.createFirstChunks();
     this.delayedChunks = this.createDelayedChunksPackets();
+
+    logger.info("Preparing respawn packets...");
     PreparedPacket respawnPackets = this.plugin.createPreparedPacket()
         .prepare(
             this.createPlayerPosAndLook(
@@ -363,7 +376,7 @@ public class LimboImpl implements Limbo {
   }
 
   @Override
-  public void spawnPlayer(Player apiPlayer, LimboSessionHandler handler) {
+  public Limbo build() {
     if (!this.built) {
       synchronized (this) {
         if (!this.built) {
@@ -381,6 +394,13 @@ public class LimboImpl implements Limbo {
         }
       }
     }
+
+    return this;
+  }
+
+  @Override
+  public void spawnPlayer(Player apiPlayer, LimboSessionHandler handler) {
+    this.build();
 
     ConnectedPlayer player = (ConnectedPlayer) apiPlayer;
     MinecraftConnection connection = player.getConnection();

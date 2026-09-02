@@ -33,6 +33,7 @@ import java.util.zip.Deflater;
 import net.elytrium.limboapi.LimboAPI;
 import net.elytrium.limboapi.api.chunk.VirtualBlock;
 import net.elytrium.limboapi.api.chunk.VirtualBlockEntity;
+import net.elytrium.limboapi.api.chunk.data.BlockSection;
 import net.elytrium.limboapi.api.chunk.data.ChunkSnapshot;
 import net.elytrium.limboapi.api.chunk.data.LightSection;
 import net.elytrium.limboapi.api.chunk.util.CompactStorage;
@@ -321,15 +322,38 @@ public class ChunkDataPacket implements MinecraftPacket {
     CompactStorage surface = pre116 ? new BitStorage19(bitsPerEntry, 256) : new BitStorage116(bitsPerEntry, 256);
     CompactStorage motionBlocking = pre116 ? new BitStorage19(bitsPerEntry, 256) : new BitStorage116(bitsPerEntry, 256);
 
-    for (int posY = this.minY; posY < this.minY + height; ++posY) {
-      for (int posX = 0; posX < 16; ++posX) {
-        for (int posZ = 0; posZ < 16; ++posZ) {
-          VirtualBlock block = this.chunk.getBlock(posX, posY, posZ);
-          if (!block.isAir()) {
-            surface.set(posX + (posZ << 4), posY - this.minY + 1);
+    BlockSection[] chunkSections = this.chunk.getSections();
+    // Scan every column from the top down, skipping fully empty sections in a single jump and
+    // stopping as soon as both the highest non-air and the highest motion-blocking block are found.
+    // This turns the O(world height) heightmap scan into roughly O(non-empty sections * 16) per
+    // column, which matters a lot for tall worlds (e.g. 4032 blocks).
+    for (int posX = 0; posX < 16; ++posX) {
+      for (int posZ = 0; posZ < 16; ++posZ) {
+        int column = posX + (posZ << 4);
+        int surfaceHeight = 0;
+        int motionBlockingHeight = 0;
+        for (int sectionIndex = chunkSections.length - 1; sectionIndex >= 0; --sectionIndex) {
+          BlockSection section = chunkSections[sectionIndex];
+          if (section == null) {
+            continue;
           }
-          if (block.isMotionBlocking()) {
-            motionBlocking.set(posX + (posZ << 4), posY - this.minY + 1);
+
+          for (int localY = 15; localY >= 0; --localY) {
+            VirtualBlock block = section.getBlockAt(posX, localY, posZ);
+            int columnHeight = sectionIndex * SECTION_HEIGHT + localY + 1;
+            if (surfaceHeight == 0 && !block.isAir()) {
+              surfaceHeight = columnHeight;
+              surface.set(column, columnHeight);
+            }
+            if (motionBlockingHeight == 0 && block.isMotionBlocking()) {
+              motionBlockingHeight = columnHeight;
+              motionBlocking.set(column, columnHeight);
+              break;
+            }
+          }
+
+          if (surfaceHeight != 0 && motionBlockingHeight != 0) {
+            break;
           }
         }
       }

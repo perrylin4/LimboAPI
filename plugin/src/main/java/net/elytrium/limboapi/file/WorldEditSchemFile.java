@@ -20,6 +20,13 @@ package net.elytrium.limboapi.file;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
+import net.elytrium.limboapi.LimboAPI;
 import net.elytrium.limboapi.api.LimboFactory;
 import net.elytrium.limboapi.api.chunk.VirtualBlock;
 import net.elytrium.limboapi.api.chunk.VirtualChunk;
@@ -29,6 +36,7 @@ import net.kyori.adventure.nbt.BinaryTag;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.kyori.adventure.nbt.IntBinaryTag;
 import net.kyori.adventure.nbt.ListBinaryTag;
+import org.slf4j.Logger;
 
 public class WorldEditSchemFile implements WorldFile {
 
@@ -81,32 +89,69 @@ public class WorldEditSchemFile implements WorldFile {
 
   @Override
   public void toWorld(LimboFactory factory, VirtualWorld world, int offsetX, int offsetY, int offsetZ, int lightLevel) {
-    VirtualBlock[] palettedBlocks = new VirtualBlock[this.palette.keySet().size()];
-    this.palette.forEach((entry) -> palettedBlocks[((IntBinaryTag) entry.getValue()).value()] = factory.createSimpleBlock(entry.getKey()));
+    int paletteSize = this.palette.keySet().size();
+    int tilesX = (this.width + 15) / 16;
+    int tilesZ = (this.length + 15) / 16;
+    int totalTiles = tilesX * tilesZ;
+    AtomicInteger parsedPalette = new AtomicInteger(0);
+    AtomicInteger completedTiles = new AtomicInteger(0);
+    final Logger logger = LimboAPI.getLogger();
 
-    // Fill the world chunk by chunk instead of block by block: a single chunk lookup per 16x16 tile
-    // (world.setBlock would otherwise do a 3x3 hash-map lookup per block) and skip air blocks entirely.
-    // Sections that end up with no blocks stay unallocated, which speeds up and reduces RAM usage of
-    // large/tall schematic imports considerably.
-    for (int chunkOffsetX = 0; chunkOffsetX < this.width; chunkOffsetX += 16) {
+    // Report import progress every 10 seconds until the import finishes. It covers both the
+    // palette-parsing phase and the chunk-filling phase.
+    ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+      Thread thread = new Thread(runnable, "LimboAPI-world-import-progress");
+      thread.setDaemon(true);
+      return thread;
+    });
+    final ScheduledFuture<?> progressTask = scheduler.scheduleAtFixedRate(() -> {
+      int paletteDone = parsedPalette.get();
+      int tilesDone = completedTiles.get();
+      logger.info(String.format(
+          "World import progress: palette %d/%d (%.1f%%), chunk tiles %d/%d (%.1f%%)",
+          paletteDone, paletteSize, paletteDone * 100.0 / Math.max(1, paletteSize),
+          tilesDone, totalTiles, tilesDone * 100.0 / Math.max(1, totalTiles)));
+    }, 10, 10, TimeUnit.SECONDS);
+
+    logger.info("Parsing NBT into paletted blocks.");
+    VirtualBlock[] palettedBlocks = new VirtualBlock[paletteSize];
+    this.palette.forEach((entry) -> {
+      palettedBlocks[((IntBinaryTag) entry.getValue()).value()] = factory.createSimpleBlock(entry.getKey());
+      parsedPalette.incrementAndGet();
+    });
+    logger.info("Palette parsed: 100% ({}/{}).", paletteSize, paletteSize);
+    logger.info("Writing paletted blocks into chunks.");
+
+    // Fill the world chunk by chunk (16x16 tiles), in parallel. Each thread owns whole tiles, so a
+    // SimpleChunk is never written by more than one thread at a time (SimpleWorld is now safe for
+    // concurrent chunk creation). Air blocks are skipped, so fully empty sections are never allocated,
+    // which speeds up and reduces RAM usage of large/tall schematic imports considerably.
+    IntStream.range(0, totalTiles).parallel().forEach(tileIndex -> {
+      int chunkOffsetX = (tileIndex / tilesZ) * 16;
+      int chunkOffsetZ = (tileIndex % tilesZ) * 16;
       int tileWidth = Math.min(16, this.width - chunkOffsetX);
-      for (int chunkOffsetZ = 0; chunkOffsetZ < this.length; chunkOffsetZ += 16) {
-        int tileLength = Math.min(16, this.length - chunkOffsetZ);
+      int tileLength = Math.min(16, this.length - chunkOffsetZ);
 
-        VirtualChunk chunk = world.getChunkOrNew(offsetX + chunkOffsetX, offsetZ + chunkOffsetZ);
-        for (int posX = 0; posX < tileWidth; ++posX) {
-          for (int posZ = 0; posZ < tileLength; ++posZ) {
-            for (int posY = 0; posY < this.height; ++posY) {
-              int index = (posY * this.length + chunkOffsetZ + posZ) * this.width + chunkOffsetX + posX;
-              VirtualBlock block = palettedBlocks[this.blocks[index]];
-              if (!block.isAir()) {
-                chunk.setBlock(posX, posY + offsetY, posZ, block);
-              }
+      VirtualChunk chunk = world.getChunkOrNew(offsetX + chunkOffsetX, offsetZ + chunkOffsetZ);
+      for (int posX = 0; posX < tileWidth; ++posX) {
+        for (int posZ = 0; posZ < tileLength; ++posZ) {
+          for (int posY = 0; posY < this.height; ++posY) {
+            int index = (posY * this.length + chunkOffsetZ + posZ) * this.width + chunkOffsetX + posX;
+            VirtualBlock block = palettedBlocks[this.blocks[index]];
+            if (!block.isAir()) {
+              chunk.setBlock(posX, posY + offsetY, posZ, block);
             }
           }
         }
       }
-    }
+
+      completedTiles.incrementAndGet();
+    });
+
+    progressTask.cancel(false);
+    scheduler.shutdown();
+    logger.info("World import finished: 100% ({} palette entries, {} chunk tiles).", paletteSize, totalTiles);
+    logger.info("Writing block entities into chunks...");
 
     for (BinaryTag blockEntity : this.blockEntities) {
       CompoundBinaryTag blockEntityData = (CompoundBinaryTag) blockEntity;
@@ -118,7 +163,8 @@ public class WorldEditSchemFile implements WorldFile {
           blockEntityData,
           factory.getBlockEntity(blockEntityData.getString("Id")));
     }
-
+    logger.info("Filling sky light...");
     world.fillSkyLight(lightLevel);
+    logger.info("World conversion finished.");
   }
 }

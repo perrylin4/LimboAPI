@@ -53,5 +53,18 @@ public interface Limbo {
 
   Limbo registerPacket(PacketDirection direction, Class<?> packetClass, Supplier<?> packetSupplier, PacketMapping[] packetMappings);
 
+  /**
+   * Builds (or rebuilds) all prepared packets of this limbo (join game, chunk data, etc.) with the
+   * current configuration.
+   *
+   * <p>Building is normally deferred until the first {@link #spawnPlayer(Player, LimboSessionHandler)}
+   * call. On huge worlds that pre-encoding can take a very long time, so plugins that configure the
+   * limbo with setters after creating it should call {@code build()} once at startup (on a background
+   * thread) after the configuration is done, to avoid stalling the first player.
+   *
+   * @return this limbo.
+   */
+  Limbo build();
+
   void dispose();
 }
