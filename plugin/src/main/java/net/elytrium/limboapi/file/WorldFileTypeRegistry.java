@@ -64,10 +64,16 @@ public enum WorldFileTypeRegistry {
   }
 
   public WorldFile fromNbt(Path file) throws IOException {
+    if (this == WORLDEDIT_SCHEM) {
+      return new WorldEditSchemFile(file);
+    }
     return this.fromNbt(BinaryTagIO.unlimitedReader().read(file, BinaryTagIO.Compression.GZIP));
   }
 
   public WorldFile fromNbt(InputStream stream) throws IOException {
+    if (this == WORLDEDIT_SCHEM) {
+      return new WorldEditSchemFile(stream);
+    }
     return this.fromNbt(BinaryTagIO.unlimitedReader().read(stream, BinaryTagIO.Compression.GZIP));
   }
 
