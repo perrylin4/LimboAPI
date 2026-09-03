@@ -9,22 +9,20 @@ package net.elytrium.limboapi.api.chunk;
 
 public enum Dimension {
 
-  OVERWORLD("minecraft:overworld", 0, 0, 28, true, BuiltInBiome.PLAINS), // (384 + 64) / 16
-  NETHER("minecraft:the_nether", -1, 1, 16, false, BuiltInBiome.NETHER_WASTES), // 256 / 16
-  THE_END("minecraft:the_end", 1, 2, 16, false, BuiltInBiome.THE_END); // 256 / 16
+  OVERWORLD("minecraft:overworld", 0, 0, true, BuiltInBiome.PLAINS), // (384 + 64) / 16
+  NETHER("minecraft:the_nether", -1, 1, false, BuiltInBiome.NETHER_WASTES), // 256 / 16
+  THE_END("minecraft:the_end", 1, 2, false, BuiltInBiome.THE_END); // 256 / 16
 
   private final String key;
   private final int legacyID;
   private final int modernID;
-  private final int maxSections;
   private final boolean hasLegacySkyLight;
   private final BuiltInBiome defaultBiome;
 
-  Dimension(String key, int legacyID, int modernID, int maxSections, boolean hasLegacySkyLight, BuiltInBiome defaultBiome) {
+  Dimension(String key, int legacyID, int modernID, boolean hasLegacySkyLight, BuiltInBiome defaultBiome) {
     this.key = key;
     this.legacyID = legacyID;
     this.modernID = modernID;
-    this.maxSections = maxSections;
     this.hasLegacySkyLight = hasLegacySkyLight;
     this.defaultBiome = defaultBiome;
   }
@@ -39,10 +37,6 @@ public enum Dimension {
 
   public int getModernID() {
     return this.modernID;
-  }
-
-  public int getMaxSections() {
-    return this.maxSections;
   }
 
   public boolean hasLegacySkyLight() {

@@ -54,12 +54,12 @@ public class PacketFactoryImpl implements PacketFactory {
   @Override
   public Object createChunkDataPacket(ChunkSnapshot chunkSnapshot, boolean legacySkyLight, int maxSections) {
     // maxSections is ignored; the world height is configured globally via Settings.MAIN.MIN_Y/HEIGHT.
-    return new ChunkDataPacket(chunkSnapshot, legacySkyLight, Settings.IMP.MAIN.MIN_Y, Settings.IMP.MAIN.HEIGHT / 16);
+    return new ChunkDataPacket(chunkSnapshot, legacySkyLight, Settings.IMP.MAIN.HEIGHT / 16);
   }
 
   @Override
   public Object createChunkDataPacket(ChunkSnapshot chunkSnapshot, Dimension dimension) {
-    return new ChunkDataPacket(chunkSnapshot, dimension.hasLegacySkyLight(), Settings.IMP.MAIN.MIN_Y, Settings.IMP.MAIN.HEIGHT / 16);
+    return new ChunkDataPacket(chunkSnapshot, dimension.hasLegacySkyLight(), Settings.IMP.MAIN.HEIGHT / 16);
   }
 
   @Override

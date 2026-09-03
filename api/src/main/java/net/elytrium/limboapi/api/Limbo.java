@@ -47,6 +47,8 @@ public interface Limbo {
 
   Limbo setMaxSuppressPacketLength(int maxSuppressPacketLength);
 
+  Limbo setIsHardCore(boolean isHardCore);
+
   Limbo registerCommand(LimboCommandMeta commandMeta);
 
   Limbo registerCommand(CommandMeta commandMeta, Command command);

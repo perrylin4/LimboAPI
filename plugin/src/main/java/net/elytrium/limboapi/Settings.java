@@ -138,6 +138,13 @@ public class Settings extends YamlConfig {
     })
     public int CHUNKS_PER_TICK = 128;
 
+    @Comment({
+        "How many long should we wait before each chunk packet sent?",
+        "50 ms means the server will send chunk packet every tick.",
+        "Only change it when you have connection issues or you're having a really huge limbo world."
+    })
+    public int CHUNK_SEND_INTERVAL_MS = 50;
+
     @Comment("Maximum delay for receiving ChatSession packet (for online-mode client-side race condition mitigation)")
     public int CHAT_SESSION_PACKET_TIMEOUT = 5000;
 
