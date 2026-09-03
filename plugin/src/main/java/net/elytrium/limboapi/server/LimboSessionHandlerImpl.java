@@ -141,6 +141,12 @@ public class LimboSessionHandlerImpl implements MinecraftSessionHandler {
         return;
       }
 
+      // The generic/unknown packet counter is a flood guard, so it should measure traffic inside a
+      // single keepalive interval instead of accumulating for the whole session: otherwise a normal
+      // idle client (periodic keepalives, acknowledgements, ...) is eventually kicked for a "too big
+      // packet" after a few minutes.
+      this.genericBytes = 0;
+
       if (this.keepAlivePending) {
         if (++this.keepAlivesSkipped == 2) {
           connection.closeWith(this.plugin.getPackets().getTimeOut(this.player.getConnection().getState()));
